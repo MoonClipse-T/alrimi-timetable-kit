@@ -1,7 +1,14 @@
 # 알림이(컴시간) 시간표 연동 키트
 
-학교 PC에 깔린 **컴시간 알림이**의 시간표를 20분마다 자동으로 읽어서, **내가 직접 만든 웹앱**이 쓸 수 있는 JSON으로 내보내 줍니다.
+학교 PC에 깔린 **컴시간 알림이**의 시간표를 20분마다 자동으로 읽어서, **내가 직접 만든 웹앱이나 구글 시트**가 쓸 수 있는 JSON으로 내보내 줍니다.
 디자인·화면은 마음대로 만들고, 시간표 연동만 이 키트에 맡기면 됩니다.
+
+**어떤 걸 고를까요?**
+| 나는… | 보낼 곳 |
+|---|---|
+| 구글 로그인 + Firebase를 쓰는 웹앱이 있다 | `1` Firebase |
+| 구글 시트만 쓴다 / 로그인 없는 웹앱이다 | `2` 웹훅 → 구글 Apps Script (아래 예시 코드 그대로) |
+| 일단 데이터만 보고 싶다 / AI로 화면을 만들어 보고 싶다 | `3` 파일 |
 
 - 윈도우 기본 PowerShell만 씁니다. 따로 설치할 것이 없어요.
 - 알림이 파일은 **읽기만** 합니다. 알림이에는 아무 영향이 없어요.
@@ -82,24 +89,86 @@ onSnapshot(doc(db, "users", auth.currentUser.uid, "meta", "timetable"), snap => 
 
 > PC 연동 코드는 오래 유지되지만, 계정 비밀번호 변경·보안 조치 등으로 무효가 되면 `sync.log`에 "내보내기 실패"가 남습니다. 그때는 새 코드를 복사해 `PC연동.bat`을 다시 실행하세요.
 
-### 2) 웹훅 URL로 POST (Firebase가 아닌 다른 백엔드)
+### 2) 웹훅 URL로 POST (구글 시트, 로그인 없는 웹앱, 다른 서버)
 
 바뀔 때마다 지정한 URL로 시간표 JSON을 그대로 `POST` 합니다(`Content-Type: application/json; charset=utf-8`).
-아무 서버나 되지만, 서버가 없다면 **구글 Apps Script**가 가장 쉽습니다:
+서버가 따로 없어도 **구글 시트 + Apps Script**면 충분해요. 아래 코드 하나로 두 가지가 됩니다.
+
+- **구글 시트만 쓰는 경우**: 시트에 `시간표` 탭이 생기고, 시간표가 바뀔 때마다 날짜 × 교시 표로 다시 채워져요.
+  노란 칸 = 바뀌었거나 추가된 수업, 회색 칸 = 원래 있었는데 빠진 수업, `수업 없음` = 방학·행사 등으로 그날 수업이 하나도 없음.
+- **로그인 없는 웹앱**: 같은 주소를 `fetch`하면 시간표 JSON이 그대로 와요. 로그인·Firebase가 필요 없어요.
+
+**설정 순서**
+
+1. 구글 시트를 새로 만들고(또는 쓰던 시트) **확장 프로그램 → Apps Script**를 엽니다.
+2. 원래 있던 내용을 지우고 아래 코드를 통째로 붙여넣은 뒤 저장(💾)합니다.
+3. 오른쪽 위 **배포 → 새 배포** → 톱니바퀴에서 **웹 앱** 선택 → 실행 계정 **나**, 액세스 권한 **모든 사용자** → **배포**.
+   권한 승인 창이 뜨면 내 계정을 고르고, "확인되지 않은 앱" 경고가 나오면 **고급 → (프로젝트 이름)(으)로 이동 → 허용**. (내가 만든 스크립트라 괜찮아요.)
+4. 나온 **웹 앱 URL**(`https://script.google.com/macros/s/…/exec`)을 복사합니다.
+5. `PC연동.bat` 실행 → 보낼 곳 `2` → 그 URL 붙여넣기. 잠시 뒤 시트에 `시간표` 탭이 생기면 성공이에요.
 
 ```js
-// 구글 Apps Script: 배포 → 새 배포 → 웹 앱(실행: 나, 액세스: 모든 사용자) → 나온 /exec 주소를 웹훅 URL로 입력
+// 알림이 연동 키트 → 구글 시트. '시간표' 탭은 시간표가 바뀔 때마다 새로 그려지니, 진도 메모는 다른 탭에 적으세요.
+const KEY = "";  // 비워 두면 누구나 보낼 수 있음. 정하면 웹훅 URL 끝에 ?key=값 을 붙여 입력
+
 function doPost(e) {
-  PropertiesService.getScriptProperties().setProperty("tt", e.postData.contents);
+  if (KEY && e.parameter.key !== KEY) return ContentService.createTextOutput("bad key");
+  const json = e.postData.contents;
+  const tt = JSON.parse(json);
+  const ss = SpreadsheetApp.getActive();
+  const data = ss.getSheetByName("_data") || ss.insertSheet("_data").hideSheet();
+  data.getRange("A1").setValue(json);  // 셀 하나에 5만 자까지(시간표 JSON은 보통 1만 자 안팎)
+  draw(ss, tt);
   return ContentService.createTextOutput("ok");
 }
-function doGet() {   // 웹앱에서 fetch(같은 /exec 주소) 로 읽기
-  return ContentService.createTextOutput(PropertiesService.getScriptProperties().getProperty("tt") || "{}")
+
+// 로그인 없는 웹앱에서: fetch("이 /exec 주소").then(r => r.json())
+function doGet() {
+  const data = SpreadsheetApp.getActive().getSheetByName("_data");
+  return ContentService.createTextOutput(data ? data.getRange("A1").getValue() || "{}" : "{}")
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// 날짜 × 교시 표. 노랑 = 바뀐/추가된 수업, 회색 = 빠진 수업
+function draw(ss, tt) {
+  const sh = ss.getSheetByName("시간표") || ss.insertSheet("시간표");
+  sh.clear();
+  const rows = [["날짜", "요일", "1교시", "2교시", "3교시", "4교시", "5교시", "6교시", "7교시", "8교시"]];
+  const bgs = [rows[0].map(() => "#dddddd")];
+  for (const date of Object.keys(tt.days).sort()) {
+    const [y, m, d] = date.split("-").map(Number);
+    const wd = new Date(y, m - 1, d).getDay();
+    const now = tt.days[date], usual = tt.base[wd] || {};
+    const off = !Object.keys(now).length;  // 방학·행사 등 하루 종일 수업 없음
+    const row = [date, "일월화수목금토"[wd]], bg = ["#ffffff", "#ffffff"];
+    for (let p = 1; p <= 8; p++) {
+      if (off) { row.push(p === 1 ? "수업 없음" : ""); bg.push("#f5f5f5"); continue; }
+      const a = now[p], b = usual[p];
+      row.push(a ? a.c + " " + a.s : b ? "(빠짐 " + b.c + ")" : "");
+      bg.push(!a && !b ? "#ffffff" : a && b && a.c === b.c && a.s === b.s ? "#ffffff" : a ? "#fff2a8" : "#eeeeee");
+    }
+    rows.push(row);
+    bgs.push(bg);
+  }
+  sh.getRange(1, 1, rows.length, rows[0].length).setNumberFormat("@").setValues(rows).setBackgrounds(bgs);
+  sh.setFrozenRows(1);
+  sh.getRange("L1").setValue(tt.teacher + " · 컴시간 저장 " + tt.savedAt);
 }
 ```
 
-> URL을 아는 사람은 누구나 보낼 수 있으니 주소를 공개하지 마세요. 필요하면 URL에 `?key=비밀값`을 붙이고 `doPost`에서 `e.parameter.key`를 확인하세요.
+**로그인 없는 웹앱에서 읽기**
+
+```js
+const tt = await fetch("https://script.google.com/macros/s/…/exec").then(r => r.json());
+draw(tt);   // 내 화면 그리기 (아래 "JSON 형식" 그대로)
+```
+
+알아 두세요
+- `시간표` 탭은 매번 **지우고 새로 그립니다.** 진도 기록·메모는 다른 탭에 적으세요. 원본 JSON은 숨긴 `_data` 탭에 있어요.
+- 코드를 고친 뒤에는 **배포 → 배포 관리 → 연필(수정) → 버전: 새 버전 → 배포**를 해야 반영돼요. 이때 URL은 그대로예요.
+- 이 URL을 아는 사람은 **누구나 시간표를 볼 수 있고(doGet), 보낼 수도 있어요(doPost).** 주소를 공개하지 마세요.
+  보내기를 막으려면 코드의 `KEY`에 아무 비밀값(예: `"abc123"`)을 넣고, `PC연동.bat`에서 URL 끝에 `?key=abc123`을 붙여 입력하세요.
+- Firebase를 쓰지 않는 다른 서버라면, POST로 받은 본문(JSON)을 저장했다가 웹앱에 내려주기만 하면 돼요.
 
 ### 3) 이 PC에 `timetable.json` 파일로만 저장
 
