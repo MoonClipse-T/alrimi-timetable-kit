@@ -1,0 +1,3 @@
+# Windows 스크립트는 CRLF/BOM 그대로 보존
+*.bat -text
+*.ps1 -text
