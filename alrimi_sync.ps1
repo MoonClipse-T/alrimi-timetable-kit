@@ -22,8 +22,11 @@ function Log($msg) {
     Add-Content -Path $LogPath -Value $line -Encoding UTF8
 }
 
+function Test-Dat($p) {  # .Gwa가 들어 있는 진짜 알림이 dat 폴더인지
+    $p -and (Test-Path -LiteralPath $p -PathType Container) -and [bool](Get-ChildItem -LiteralPath $p -Filter '*.Gwa')
+}
 function Find-Dat {
-    foreach ($p in "${env:ProgramFiles(x86)}\알림이\dat", "$env:ProgramFiles\알림이\dat") { if (Test-Path $p) { return $p } }
+    foreach ($p in "${env:ProgramFiles(x86)}\알림이\dat", "$env:ProgramFiles\알림이\dat") { if (Test-Dat $p) { return $p } }
 }
 
 # 가장 최근 학기 Gwa(2026_2 > 2026_1, 파일명 순)를 열어 @{파일명 = byte[]} 반환. zip 안 한글 파일명은 cp949.
@@ -146,7 +149,14 @@ function Register-Task {
 
 $conf = Load-Conf
 if ($Setup) {
-    $conf.alrimiDat = Ask '알림이 dat 폴더' $(if ($conf.alrimiDat) { $conf.alrimiDat } else { Find-Dat })
+    # 알림이 폴더는 자동으로 찾고, 못 찾을 때만 묻는다
+    if (-not (Test-Dat $conf.alrimiDat)) { $conf.alrimiDat = Find-Dat }
+    while (-not (Test-Dat $conf.alrimiDat)) {
+        $p = (Read-Host '알림이 dat 폴더를 찾지 못했어요. 경로를 붙여넣어 주세요 (예: C:\Program Files (x86)\알림이\dat)').Trim().Trim('"')
+        if (-not $p) { throw '알림이 dat 폴더가 필요해요. 알림이를 한 번 실행해 시간표를 받은 뒤 다시 해 주세요.' }
+        $conf.alrimiDat = $p
+    }
+    Write-Host "알림이 폴더: $($conf.alrimiDat)"
     $conf.teacher = Ask '컴시간 교사 이름(알림이에 보이는 그대로)' $conf.teacher
     Write-Host "`n시간표를 어디로 보낼까요?`n  1) 내 Firebase Firestore 문서`n  2) 웹훅 URL로 POST (Apps Script 등 다른 백엔드)`n  3) 이 PC에 timetable.json 파일로만 저장"
     $def = @{ firebase = '1'; webhook = '2'; file = '3' }[[string]$conf.mode]
@@ -165,7 +175,8 @@ if ($Setup) {
     $conf.Remove('lastHash')
     Save-Conf $conf
 }
-$dat = if ($conf.alrimiDat) { $conf.alrimiDat } else { Find-Dat }
+$dat = if (Test-Dat $conf.alrimiDat) { $conf.alrimiDat } else { Find-Dat }
+if (-not $dat) { Write-Host '알림이 dat 폴더를 찾지 못했어요. PC연동.bat 을 다시 실행해 주세요.'; exit 1 }
 if (-not $Teacher) { $Teacher = $conf.teacher }
 if (-not $Teacher) { Write-Host '먼저 PC연동.bat 을 실행하세요.'; exit 1 }
 $gwa = Read-Gwa $dat
