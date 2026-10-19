@@ -127,7 +127,7 @@ function Send-Firebase($conf, $json) {
 
 function Send-Webhook($conf, $json) {
     Invoke-RestMethod -Method Post -Uri $conf.webhookUrl -ContentType 'application/json; charset=utf-8' `
-        -Body ([Text.Encoding]::UTF8.GetBytes($json)) | Out-Null
+        -Body ([Text.Encoding]::UTF8.GetBytes($json))  # 받는 쪽 응답(예: "ok 바뀐 칸 6")은 로그에 남김
 }
 
 function Send-File($conf, $json) {
@@ -178,9 +178,9 @@ if (-not $conf.mode) { Write-Host '먼저 PC연동.bat 을 실행하세요.'; ex
 $hash = -join ([Security.Cryptography.SHA1]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($json)) | ForEach-Object { $_.ToString('x2') })
 if ($hash -eq $conf.lastHash -and ($conf.mode -ne 'file' -or (Test-Path $conf.outFile))) { return }  # 변경 없음: 조용히 종료
 try {
-    switch ($conf.mode) { 'firebase' { Send-Firebase $conf $json } 'webhook' { Send-Webhook $conf $json } 'file' { Send-File $conf $json } }
+    $resp = switch ($conf.mode) { 'firebase' { Send-Firebase $conf $json } 'webhook' { Send-Webhook $conf $json } 'file' { Send-File $conf $json } }
 } catch { Log "내보내기 실패($($conf.mode)): $($_.Exception.Message) $($_.ErrorDetails.Message)"; exit 1 }  # 다음 실행 때 다시 시도
 $conf.lastHash = $hash
 Save-Conf $conf
-Log "내보내기 완료($($conf.mode), $($gwa.Name), 컴시간 저장 $($payload.savedAt))"
+Log "내보내기 완료($($conf.mode), $($gwa.Name), 컴시간 저장 $($payload.savedAt))$(if ($resp -is [string]) { " 응답: $($resp.Trim())" })"
 if ($Setup) { Register-Task }
