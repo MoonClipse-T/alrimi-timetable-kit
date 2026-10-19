@@ -3,7 +3,7 @@
 // 오늘부터의 날짜만, 반 번호 칸만 고칩니다(지난 기록·진도 메모 줄은 그대로).
 // 기준은 컴시간 '기본 시간표'(원래 시간표)예요. 손으로 고쳐 둔 칸도 원래 시간표와 다르면 '바뀐 수업'으로 표시해요.
 //   새로 생긴/바뀐 수업: 반 번호를 넣고 "213 (변경)"처럼 빨간 굵은 글씨 + 메모 "[컴시간] 변경 (원래 211)"
-//   빠진 수업: 칸에 빨간 굵은 글씨로 "변경" + 메모 "[컴시간] 209 빠짐"
+//   빠진 수업: 칸에 빨간 굵은 글씨로 "변경" + 칸 색은 무색 + 메모 "[컴시간] 209 빠짐"
 //   원래 시간표대로인 칸: 글씨·메모를 원래대로
 // 반 번호는 숫자로 남아서(표시만 "(변경)") 수업 횟수 세는 수식도 그대로 맞아요.
 // 이미 다른 Apps Script 코드가 있으면 지우지 말고, 새 스크립트 파일(+ → 스크립트)에 이 코드를 넣으세요.
@@ -51,7 +51,7 @@ function alrimiSync(ss, tt) {
   const width = sh.getLastColumn() - ALRIMI.FIRST_COL + 1;
   const dates = sh.getRange(ALRIMI.DATE_ROW, ALRIMI.FIRST_COL, 1, width).getValues()[0];
   const block = sh.getRange(ALRIMI.FIRST_ROW, ALRIMI.FIRST_COL, lastRow - ALRIMI.FIRST_ROW + 1, width);
-  const vals = block.getValues(), notes = block.getNotes();
+  const vals = block.getValues(), notes = block.getNotes(), bgs = block.getBackgrounds();
   const nfs = block.getNumberFormats(), fcs = block.getFontColors(), fws = block.getFontWeights();
   let changed = 0, nDates = 0, nDays = 0;
 
@@ -85,8 +85,15 @@ function alrimiSync(ss, tt) {
       const show = !mark || typeof value === "number" ? value : value === "" ? "변경" : value + " (변경)";
 
       let touched = false;
-      if (mark && !saved) props[a1] = JSON.stringify({ nf: nfs[i][j], fc: fcs[i][j], fw: fws[i][j] });
+      if (mark && !saved) props[a1] = JSON.stringify({ nf: nfs[i][j], fc: fcs[i][j], fw: fws[i][j], bg: bgs[i][j] });
       const orig_ = saved || (mark ? JSON.parse(props[a1]) : null);
+      const removed = mark && show === "변경", wasRemoved = s === "변경" && !!saved;
+      if (removed && bgs[i][j] !== "#ffffff") {          // 빠진 수업 칸은 무색으로
+        if (orig_.bg === undefined) { orig_.bg = bgs[i][j]; props[a1] = JSON.stringify(orig_); }
+        cell.setBackground(null); touched = true;
+      } else if (!removed && wasRemoved && saved.bg !== undefined && saved.bg !== bgs[i][j]) {  // 다시 수업이 생김 → 원래 색
+        cell.setBackground(saved.bg === "#ffffff" ? null : saved.bg); touched = true;
+      }
       if (typeof show === "number") {
         if (v !== show) { cell.setValue(show); touched = true; }
         if (mark && (nfs[i][j] !== ALRIMI.MARK_NF || fcs[i][j] !== ALRIMI.RED || fws[i][j] !== "bold")) {
